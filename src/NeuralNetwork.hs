@@ -2,17 +2,20 @@
 {-# LANGUAGE UnicodeSyntax #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 
-module NeuralNetwork (NeuronLayer(Layer), createStd, createStd2, eval, train, cost, vector, costGradient, costs, minitrain, layers, feedForward, backPropagation, weights, dot, accuracy)
+module NeuralNetwork (NeuralNetwork, NeuronLayer(Layer), createStd, createStd2, eval, train, trainVerbose, trainEpochsVerbose, cost, vector, costGradient, costs, minitrain, layers, feedForward, backPropagation, weights, dot, accuracy)
 where
 
 
 {- Some linear algebra stuff -}
 
 import Data.Matrix
+import Data.List (maximumBy)
+import Data.Ord (comparing)
 
 import Data.Random.Normal
 import System.Random
 import System.Random.Shuffle
+import Control.Monad (foldM)
 
 type R = Double
 
@@ -64,7 +67,8 @@ crossEntropy yv av = -(yv · (fmap log av) + (fmap f yv) · (fmap (log.f) av))
     where f x = 1 - x
 
 dCrossEntropy :: Vector R -> Vector R -> Vector R
-dCrossEntropy yv av = elementwiseUnsafe (\y a -> y/a - (1-y)/(1-a)) yv av
+dCrossEntropy yv av = elementwiseUnsafe (\y a -> y / max a eps - (1-y) / max (1-a) eps) yv av
+    where eps = 1e-12
 
 
 data NeuronLayer = Layer {weights :: Matrix R, -- weights matrix wm
@@ -104,15 +108,15 @@ instance Show NeuralNetwork where
 create' :: [Int] -> (Vector R -> Vector R -> R) -> (Vector R -> Vector R -> Vector R) -> (Vector R -> Vector R) -> (Vector R -> Vector R) -> R -> Int -> NeuralNetwork
 create' xs cost dCost σ σ' η seed = Network ls cost dCost σ σ' η
     where ls = zipWith Layer wms bvs
-          wms = randomMatrices (zip (tail xs) xs) seed
-          bvs = randomMatrices (zip (tail xs) (repeat 1)) (seed + 2842848)
+          wms = zipWith scale stdevs (randomMatrices (zip (tail xs) xs) seed)
+          stdevs = map (recip . sqrt . fromIntegral) (init xs) -- Xavier: 1/sqrt(fan-in) => constant variance per neuron.
+          bvs = map (\n -> zero n 1) (tail xs) -- just initialise biases with 0
 
           randomMatrices :: [(Int,Int)] -> Int -> [Matrix R] -- creates random matrices of the given sizes from some seed
           randomMatrices ns = zipWith (\(r,c) xs -> fromList r c xs) ns . splitList' (map (\(r,c) -> r*c) ns) . randomList
 
-          randomList :: Int -> [R] -- creates an infinite list of i.i.d. r.v. of distribution N(0,stdev^2) from some seed
-          randomList = mkNormals' (0,stdev)
-          stdev = (sqrt . fromIntegral . head) xs
+          randomList :: Int -> [R] -- creates an infinite list of i.i.d. r.v. of distribution N(0,1) from some seed
+          randomList = mkNormals' (0,1)
 
           splitList' :: [Int] -> [a] -> [[a]] -- e.g. splitList' [n1,n2,n3,n4] xs splits xs into 4 lists of size n1,n2,n3,n4
           splitList' ns xs = (reverse . snd . foldl (\(as,bss) n -> (drop n as, (take n as) : bss)) (xs, []) ) ns
@@ -140,12 +144,14 @@ eval :: NeuralNetwork -> [R] -> [R]
 eval nn = toList . eval' nn . vector
 
 cost :: NeuralNetwork -> [(Vector R, Vector R)] -> R
-cost nn tdata = 1.0 / (fromIntegral . length) tdata * (sum . map (uncurry (objective nn) . mapf (eval' nn))) tdata
-    where mapf f (a,b) = (f a, b)
+cost nn tdata = 1.0 / (fromIntegral . length) tdata 
+    * (sum . map (uncurry (objective nn) . mapf (eval' nn))) tdata
+    where mapf f (a,b) = (b, f a)
 
 costGradient :: NeuralNetwork -> [(Vector R, Vector R)] -> R
-costGradient nn tdata = 1.0 / (fromIntegral . length) tdata * (magnitude . sum . map (uncurry (dObjective nn) . mapf (eval' nn))) tdata
-    where mapf f (a,b) = (f a, b)
+costGradient nn tdata = 1.0 / (fromIntegral . length) tdata 
+    * (magnitude . sum . map (uncurry (dObjective nn) . mapf (eval' nn))) tdata
+    where mapf f (a,b) = (b, f a)
 
 {- Runs an input through the neural network, computing the weighted input sums and the activations for each
 layer. output is ([z2,z3,..,zL],[a1,a2,..,aL]) where a1 is just the input data-}
@@ -154,7 +160,7 @@ feedForward nn xv = (mapf tail . unzip . scanl advance (xv, xv) . layers) nn
     where advance (zv0,av0) (Layer wm bv) = (zv1, av1)   -- run the input from last layer through current layer
               where zv1 = wm * av0 + bv                  -- weighted input sum
                     av1 = (activation nn) zv1            -- output of current layer
-          mapf f (a,b) = (f a, b)                        -- functor-like function for pair (maps f to first element)
+          mapf f (a,b) = (f a, b)                        -- apply f to z-vectors, leave a-vectors unchanged
 
 
 {- Computes the gradient of the cost function restricted to a single input, given the wanted output and the
@@ -189,12 +195,40 @@ train' nn batchSize tdata gen = (foldl minitrain nn . splitList batchSize . vect
 train'' nn batchSize tdata gen = (map snd . scanl cons (nn,0) . splitList batchSize . vectorized) (shuffle' tdata (length tdata) gen)
     where splitList n = takeWhile (not . null) . map (take n) . iterate (drop n) -- produces list of minibatches
           vectorized xs = map (\(a,b) -> (vector a, vector b)) xs                -- convert data from list to vector
-          cons (nnn,x) xs = (minitrain nnn xs, costGradient (minitrain nnn xs) xs)
+          cons (nnn, _) xs = let nnn' = minitrain nnn xs
+                             in (nnn', costGradient nnn' xs)
 
 train :: NeuralNetwork -> Int -> [([R],[R])] -> IO NeuralNetwork
 train nn batchSize tdata = fmap (train' nn batchSize tdata) getStdGen
 
+-- print costs after every minibatch
+trainVerbose :: NeuralNetwork -> Int -> [([R],[R])] -> IO NeuralNetwork
+trainVerbose nn batchSize tdata = do
+    gen <- getStdGen
+    let batches = (splitList batchSize . vectorized) (shuffle' tdata (length tdata) gen)
+    foldM step nn (zip [(1 :: Int)..] batches)
+    where step nnn (i, batch) = do
+              let nnn' = minitrain nnn batch
+              putStrLn $ "batch " ++ show i ++ "  cost: " ++ show (costGradient nnn' batch)
+              return nnn'
+          splitList n = takeWhile (not . null) . map (take n) . iterate (drop n)
+          vectorized xs = map (\(a,b) -> (vector a, vector b)) xs
+
 costs nn batchSize tdata = fmap (train'' nn batchSize tdata) getStdGen
 
-accuracy nn tdata = (sum . map f) tdata / (fromIntegral(length tdata))
-    where f (a,b) = if (magnitude (eval' nn (vector a) - (vector b))) < 0.5 then 1.0 else 0.0
+-- train for n epochs on training data, printing test accuracy after each epoch --
+trainEpochsVerbose :: Int -> NeuralNetwork -> Int -> [([R],[R])] -> [([R],[R])] -> IO NeuralNetwork
+trainEpochsVerbose numEpochs nn batchSize trainData testData =
+    foldM trainEpoch nn [1..numEpochs]
+    where trainEpoch n epoch = do
+              putStrLn $ "\n--- Epoch " ++ show epoch ++ " ---"
+              trained <- trainVerbose n batchSize trainData
+              let acc = accuracy trained testData
+              putStrLn $ "Epoch " ++ show epoch ++ " accuracy: " ++ show acc
+              return trained
+
+accuracy nn tdata = (sum . map f) tdata / (fromIntegral (length tdata))
+    where f (a,b) = if argmax (eval' nn (vector a)) == argmax (vector b) then 1.0 else 0.0
+
+argmax :: Vector R -> Int
+argmax v = fst $ maximumBy (comparing snd) (zip [0..] (toList v))

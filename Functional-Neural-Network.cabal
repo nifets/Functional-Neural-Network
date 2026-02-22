@@ -1,16 +1,14 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
+-- This file has been generated from package.yaml by hpack version 0.38.1.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: afe1c2bbb1c745d7e176cd27b7b78e7cfc29b81f368c4bb325c67a1b71f03f48
 
-name:           Neural-Network
+name:           Functional-Neural-Network
 version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/githubuser/Neural-Network#readme>
-homepage:       https://github.com/FhizZx/Neural-Network#readme
-bug-reports:    https://github.com/FhizZx/Neural-Network/issues
+description:    Please see the README on GitHub at <https://github.com/nifets/Functional-Neural-Network#readme>
+homepage:       https://github.com/nifets/Functional-Neural-Network#readme
+bug-reports:    https://github.com/nifets/Functional-Neural-Network/issues
 author:         Stefan Manolache
 maintainer:     stefanmanol@gmail.com
 copyright:      2020 Stefan Manolache
@@ -19,17 +17,16 @@ license-file:   LICENSE
 build-type:     Simple
 extra-source-files:
     README.md
-    ChangeLog.md
 
 source-repository head
   type: git
-  location: https://github.com/FhizZx/Neural-Network
+  location: https://github.com/nifets/Functional-Neural-Network
 
 library
   exposed-modules:
       NeuralNetwork
   other-modules:
-      Paths_Neural_Network
+      Paths_Functional_Neural_Network
   hs-source-dirs:
       src
   build-depends:
@@ -44,12 +41,12 @@ library
 executable Neural-Network-exe
   main-is: Main.hs
   other-modules:
-      Paths_Neural_Network
+      Paths_Functional_Neural_Network
   hs-source-dirs:
-      app
+      app/main
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      Neural-Network
+      Functional-Neural-Network
     , base >=4.7 && <5
     , csv
     , matrix
@@ -58,16 +55,15 @@ executable Neural-Network-exe
     , random-shuffle
   default-language: Haskell2010
 
-test-suite Neural-Network-test
-  type: exitcode-stdio-1.0
-  main-is: Spec.hs
+executable XorTest-exe
+  main-is: Main.hs
   other-modules:
-      Paths_Neural_Network
+      Paths_Functional_Neural_Network
   hs-source-dirs:
-      test
+      app/xor
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      Neural-Network
+      Functional-Neural-Network
     , base >=4.7 && <5
     , csv
     , matrix
